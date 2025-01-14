@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gradio Tunnel</title>
+</head>
+<body>
+    <h1>Gradio is running behind this ngrok tunnel:</h1>
+    {% if ngrok_url %}
+        <p><a href="{{ ngrok_url }}">Go to Gradio App</a></p>
+    {% else %}
+        <p>Starting ngrok tunnel, please wait...</p>
+    {% endif %}
+</body>
+</html>
