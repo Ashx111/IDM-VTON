@@ -2,6 +2,7 @@ from flask import Flask, render_template, Response
 import subprocess
 import time
 import requests
+import os
 
 app = Flask(__name__)
 
@@ -19,10 +20,15 @@ def start_gradio_app():
 # Function to start ngrok
 def start_ngrok():
     print("Starting ngrok...")
-    process = subprocess.Popen(["ngrok", "http", "--authtoken", "YOUR_AUTH_TOKEN", str(NGROK_PORT)])
-    time.sleep(5)
-    print("ngrok started.")
-    return process
+    ngrok_auth_token = os.environ.get("NGROK_AUTH_TOKEN")  # Get the token from environment variable
+    if ngrok_auth_token:
+        process = subprocess.Popen(["ngrok", "http", "--authtoken", ngrok_auth_token, str(NGROK_PORT)])
+        time.sleep(5)
+        print("ngrok started.")
+        return process
+    else:
+        print("Error: NGROK_AUTH_TOKEN environment variable not set.")
+        return None
 
 # Function to get the public ngrok URL
 def get_ngrok_url():
