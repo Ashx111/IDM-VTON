@@ -13,8 +13,6 @@ from transformers import (
 from diffusers import AutoencoderKL
 from preprocess.humanparsing.run_parsing import Parsing
 from preprocess.openpose.run_openpose import OpenPose
-from util.pipeline import quantize_4bit  # Keep the import, might be used internally by other libs
-from torch_int_linear import BLinear8bit as KBitLinear  # Assuming you use this for 8-bit
 
 app = Flask(__name__)
 
@@ -32,20 +30,14 @@ tensor_transfrom = transforms.Compose(
     ]
 )
 
-load_mode = '8bit'  # Force 8-bit quantization
-fixed_vae = True
-
-def quantize_8bit(model):
-    # Your 8-bit quantization logic here
-    for n, m in model.named_modules():
-        if isinstance(m, torch.nn.Linear):
-            torch.nn.utils.parametrize.register_parametrization(m, 'weight', KBitLinear(m.in_features, m.out_features))
-
 def load_models():
+    print("loading models")
     global pipe, unet, UNet_Encoder, parsing_model, openpose_model
-    print("****loading models****")
     dtype = torch.float16
-    dtypeQuantize = torch.float8_e4m3fn  # Assuming this is correct for your 8-bit setup
+    dtypeQuantize = dtype
+    load_mode = '8bit'  # Or whatever your desired load mode is
+    if load_mode in ('4bit', '8bit'):
+        dtypeQuantize = torch.float8_e4m3fn
 
     model_id = 'yisol/IDM-VTON'
     vae_model_id = 'madebyollin/sdxl-vae-fp16-fix'
@@ -55,8 +47,6 @@ def load_models():
         subfolder="unet",
         torch_dtype=dtypeQuantize,
     ).to(device)
-    if load_mode == '8bit':
-        quantize_8bit(unet)
     unet.requires_grad_(False)
 
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
@@ -64,28 +54,22 @@ def load_models():
         subfolder="image_encoder",
         torch_dtype=torch.float16,
     ).to(device)
-    if load_mode == '8bit':
-        quantize_8bit(image_encoder)
+    image_encoder.requires_grad_(False)
 
-    if fixed_vae:
+    if True:
         vae = AutoencoderKL.from_pretrained(vae_model_id, torch_dtype=dtype).to(device)
     else:
         vae = AutoencoderKL.from_pretrained(
             model_id, subfolder="vae", torch_dtype=dtype
         ).to(device)
+    vae.requires_grad_(False)
 
     UNet_Encoder = UNet2DConditionModel_ref.from_pretrained(
         model_id,
         subfolder="unet_encoder",
         torch_dtype=dtypeQuantize,
     ).to(device)
-    if load_mode == '8bit':
-        quantize_8bit(UNet_Encoder)
-
     UNet_Encoder.requires_grad_(False)
-    image_encoder.requires_grad_(False)
-    vae.requires_grad_(False)
-    unet.requires_grad_(False)
 
     pipe_param = {
         'pretrained_model_name_or_path': model_id,
@@ -100,20 +84,19 @@ def load_models():
     pipe.unet_encoder = UNet_Encoder
     pipe.unet_encoder.to(pipe.unet.device)
 
-    if load_mode == '8bit':
+    if load_mode == '4bit':  # Keep your 4-bit logic if you use it
+        from util.pipeline import quantize_4bit  # Import here if needed
+
         if pipe.text_encoder is not None:
-            quantize_8bit(pipe.text_encoder)
+            quantize_4bit(pipe.text_encoder)
             pipe.text_encoder.to(device)
         if pipe.text_encoder_2 is not None:
-            quantize_8bit(pipe.text_encoder_2)
+            quantize_4bit(pipe.text_encoder_2)
             pipe.text_encoder_2.to(device)
 
     parsing_model = Parsing(0)
     openpose_model = OpenPose(0)
     openpose_model.preprocessor.body_estimation.model.to(device)
-
-    gc.collect()
-    torch.cuda.empty_cache()
     print("loading models completed!!!!!!!!!!!!")
 
 # Your API endpoints and other Flask code here...
