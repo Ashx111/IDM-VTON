@@ -40,11 +40,9 @@ tensor_transfrom = transforms.Compose(
 
 def load_models():
     global pipe, unet, UNet_Encoder, parsing_model, openpose_model
+    print("Loading models...")
     dtype = torch.float16
-    dtypeQuantize = dtype
-    load_mode = '8bit' # Or whatever your desired load mode is
-    if(load_mode in ('4bit','8bit')):
-        dtypeQuantize = torch.float8_e4m3fn
+    dtypeQuantize = torch.float8_e4m3fn if load_mode == '4bit' else dtype
 
     model_id = 'yisol/IDM-VTON'
     vae_model_id = 'madebyollin/sdxl-vae-fp16-fix'
@@ -53,7 +51,7 @@ def load_models():
         model_id,
         subfolder="unet",
         torch_dtype=dtypeQuantize,
-    ).to(device) # Move to device here
+    ).to(device)
     if load_mode == '4bit':
         quantize_4bit(unet)
     unet.requires_grad_(False)
@@ -62,23 +60,23 @@ def load_models():
         model_id,
         subfolder="image_encoder",
         torch_dtype=torch.float16,
-    ).to(device) # Move to device here
+    ).to(device)
     if load_mode == '4bit':
         quantize_4bit(image_encoder)
 
-    if True:
-        vae = AutoencoderKL.from_pretrained(vae_model_id, torch_dtype=dtype).to(device) # Move to device here
+    if fixed_vae:
+        vae = AutoencoderKL.from_pretrained(vae_model_id, torch_dtype=dtype).to(device)
     else:
         vae = AutoencoderKL.from_pretrained(model_id,
                                             subfolder="vae",
                                             torch_dtype=dtype,
-        ).to(device) # Move to device here
+        ).to(device)
 
     UNet_Encoder = UNet2DConditionModel_ref.from_pretrained(
         model_id,
         subfolder="unet_encoder",
         torch_dtype=dtypeQuantize,
-    ).to(device) # Move to device here
+    ).to(device)
     if load_mode == '4bit':
         quantize_4bit(UNet_Encoder)
 
@@ -103,16 +101,19 @@ def load_models():
     if load_mode == '4bit':
         if pipe.text_encoder is not None:
             quantize_4bit(pipe.text_encoder)
-            pipe.text_encoder.to(device) # Move to device
+            pipe.text_encoder.to(device)
         if pipe.text_encoder_2 is not None:
             quantize_4bit(pipe.text_encoder_2)
-            pipe.text_encoder_2.to(device) # Move to device
+            pipe.text_encoder_2.to(device)
 
-    # Initialize other models here as well
     parsing_model = Parsing(0)
     openpose_model = OpenPose(0)
     openpose_model.preprocessor.body_estimation.model.to(device)
 
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("Models loaded successfully.")
+    
 # Load the models when the application starts
 with app.app_context():
     load_models()
