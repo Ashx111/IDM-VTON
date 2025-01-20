@@ -39,7 +39,7 @@ tensor_transfrom = transforms.Compose(
             )
 
 def load_models():
-    printf("loading models")
+    print("loading models")
     global pipe, unet, UNet_Encoder, parsing_model, openpose_model
     dtype = torch.float16
     dtypeQuantize = dtype
@@ -113,7 +113,7 @@ def load_models():
     parsing_model = Parsing(0)
     openpose_model = OpenPose(0)
     openpose_model.preprocessor.body_estimation.model.to(device)
-    printf("loading models completed!!!!!!!!!!!!")
+    print("loading models completed!!!!!!!!!!!!")
 
 # Load the models when the application starts
 with app.app_context():
