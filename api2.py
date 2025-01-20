@@ -1,7 +1,20 @@
 from flask import Flask, request, jsonify
 import argparse, torch, os
 from PIL import Image
-# ... your other imports ...
+from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
+from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
+from src.unet_hacked_tryon import UNet2DConditionModel
+from transformers import (
+    CLIPImageProcessor,
+    CLIPVisionModelWithProjection,
+)
+from diffusers import AutoencoderKL
+from torchvision import transforms
+import apply_net
+from preprocess.humanparsing.run_parsing import Parsing
+from preprocess.openpose.run_openpose import OpenPose
+from detectron2.data.detection_utils import convert_PIL_to_numpy,_apply_exif_orientation
+from torchvision.transforms.functional import to_pil_image
 from util.pipeline import quantize_4bit, restart_cpu_offload, torch_gc
 from io import BytesIO
 import base64
@@ -35,10 +48,18 @@ need_restart_cpu_offloading = False
 unet = None
 pipe = None
 UNet_Encoder = None
+parsing_model = None  # Initialize globally
+openpose_model = None # Initialize globally
 example_path = os.path.join(os.path.dirname(__file__), 'example')
+tensor_transfrom = transforms.Compose(
+                    [
+                        transforms.ToTensor(),
+                        transforms.Normalize([0.5], [0.5]),
+                    ]
+            )
 
 def initialize_pipeline():
-    global pipe, unet, UNet_Encoder, need_restart_cpu_offloading
+    global pipe, unet, UNet_Encoder, need_restart_cpu_offloading, parsing_model, openpose_model
     if pipe is None:
         print("Initializing pipeline...")
         # ... (rest of your model and pipeline initialization code from the Gradio app)
@@ -101,12 +122,15 @@ def initialize_pipeline():
             if pipe.text_encoder_2 is not None:
                 quantize_4bit(pipe.text_encoder_2)
         print("Pipeline initialized!")
+        parsing_model = Parsing(0)  # Initialize here
+        openpose_model = OpenPose(0) # Initialize here
+        openpose_model.preprocessor.body_estimation.model.to(device)
 
 initialize_pipeline() # Initialize the pipeline when the API starts
 
 # --- Your start_tryon function (modified for API input/output) ---
 def start_tryon(human_img_file, garm_img_file, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
-    global pipe, need_restart_cpu_offloading
+    global pipe, need_restart_cpu_offloading, parsing_model, openpose_model, tensor_transfrom
 
     if pipe is None:
         return jsonify({"error": "Pipeline not initialized"}), 500
@@ -118,15 +142,6 @@ def start_tryon(human_img_file, garm_img_file, garment_des, category, is_checked
         pipe.enable_model_cpu_offload()
 
     torch_gc()
-    parsing_model = Parsing(0)
-    openpose_model = OpenPose(0)
-    openpose_model.preprocessor.body_estimation.model.to(device)
-    tensor_transfrom = transforms.Compose(
-                    [
-                        transforms.ToTensor(),
-                        transforms.Normalize([0.5], [0.5]),
-                    ]
-            )
 
     human_img_orig = Image.open(human_img_file).convert("RGB")
     garm_img = Image.open(garm_img_file).convert("RGB").resize((768,1024))
@@ -232,6 +247,9 @@ def start_tryon(human_img_file, garm_img_file, garment_des, category, is_checked
                     img.save(buffered, format="PNG")
                     img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
                     results.append(img_base64)
+
+            del pose_img_tensor, garm_tensor, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds, prompt_embeds_c
+            torch.cuda.empty_cache()
 
     # Convert mask_gray to base64
     buffered_mask = BytesIO()
