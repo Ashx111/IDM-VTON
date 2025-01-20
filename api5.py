@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from flask import Flask, request, jsonify
 from PIL import Image
 from pydantic import BaseModel
 import torch
@@ -22,7 +22,7 @@ from detectron2.data.detection_utils import convert_PIL_to_numpy,_apply_exif_ori
 from torchvision.transforms.functional import to_pil_image
 from util.pipeline import quantize_4bit, restart_cpu_offload, torch_gc
 
-app = FastAPI()
+app = Flask(__name__)
 
 # Load models
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -112,11 +112,12 @@ def load_models():
 
 load_models()
 
-@app.post("/tryon/")
-async def tryon_image(request: TryonRequest):
+@app.route('/tryon', methods=['POST'])
+def tryon_image():
     # Process request
-    human_image = Image.open(request.human_image)
-    garment_image = Image.open(request.garment_image)
+    data = request.json
+    human_image = Image.open(data['human_image'])
+    garment_image = Image.open(data['garment_image'])
 
     parsing_model = Parsing(0)
     openpose_model = OpenPose(0)
@@ -131,7 +132,7 @@ async def tryon_image(request: TryonRequest):
     garm_img= garment_image.convert("RGB").resize((768,1024))
     human_img_orig = human_image.convert("RGB")    
     
-    if request.is_checked_crop:
+    if data['is_checked_crop']:
         width, height = human_img_orig.size
         target_width = int(min(width, height * (3 / 4)))
         target_height = int(min(height, width * (4 / 3)))
@@ -145,10 +146,10 @@ async def tryon_image(request: TryonRequest):
     else:
         human_img = human_img_orig.resize((768,1024))
 
-    if request.is_checked:
+    if data['is_checked']:
         keypoints = openpose_model(human_img.resize((384,512)))
         model_parse, _ = parsing_model(human_img.resize((384,512)))
-        mask, mask_gray = get_mask_location('hd', request.category, model_parse, keypoints)
+        mask, mask_gray = get_mask_location('hd', data['category'], model_parse, keypoints)
         mask = mask.resize((768,1024))
     else:
         mask = pil_to_binary_mask(human_image.convert("RGB").resize((768, 1024)))
@@ -174,7 +175,7 @@ async def tryon_image(request: TryonRequest):
         # Extract the images
         with torch.cuda.amp.autocast(dtype=torch.float16):
             with torch.no_grad():
-                prompt = "model is wearing " + request.garment_description
+                prompt = "model is wearing " + data['garment_description']
                 negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
                 with torch.inference_mode():
                     (
@@ -189,7 +190,7 @@ async def tryon_image(request: TryonRequest):
                         negative_prompt=negative_prompt,
                     )
                                     
-                    prompt = "a photo of " + request.garment_description
+                    prompt = "a photo of " + data['garment_description']
                     negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
                     if not isinstance(prompt, List):
                         prompt = [prompt] * 1
@@ -211,11 +212,11 @@ async def tryon_image(request: TryonRequest):
                     pose_img =  tensor_transfrom(pose_img).unsqueeze(0).to(device,torch.float16)
                     garm_tensor =  tensor_transfrom(garm_img).unsqueeze(0).to(device,torch.float16)
                     results = []
-                    current_seed = request.seed
-                    for i in range(request.number_of_images):  
-                        if request.is_randomize_seed:
+                    current_seed = data['seed']
+                    for i in range(data['number_of_images']):  
+                        if data['is_randomize_seed']:
                             current_seed = torch.randint(0, 2**32, size=(1,)).item()                        
-                        generator = torch.Generator(device).manual_seed(current_seed) if request.seed != -1 else None                     
+                        generator = torch.Generator(device).manual_seed(current_seed) if data['seed'] != -1 else None                     
                         current_seed = current_seed + i
 
                         images = pipe(
@@ -223,7 +224,7 @@ async def tryon_image(request: TryonRequest):
                             negative_prompt_embeds=negative_prompt_embeds.to(device,torch.float16),
                             pooled_prompt_embeds=pooled_prompt_embeds.to(device,torch.float16),
                             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device,torch.float16),
-                            num_inference_steps=request.denoise_steps,
+                            num_inference_steps=data['denoise_steps'],
                             generator=generator,
                             strength = 1.0,
                             pose_img = pose_img.to(device,torch.float16),
@@ -238,7 +239,7 @@ async def tryon_image(request: TryonRequest):
                             dtype=torch.float16,
                             device=device,
                         )[0]
-                        if request.is_checked_crop:
+                        if data['is_checked_crop']:
                             out_img = images[0].resize(crop_size)        
                             human_img_orig.paste(out_img, (int(left), int(top)))   
                             img_path = save_output_image(human_img_orig, base_path="outputs", base_filename='img', seed=current_seed)
@@ -246,8 +247,11 @@ async def tryon_image(request: TryonRequest):
                         else:
                             img_path = save_output_image(images[0], base_path="outputs", base_filename='img')
                             results.append(img_path)
-                    return {"results": results}
+                    return jsonify({"results": results})
 
-@app.get("/check")
-async def check():
+@app.route("/check")
+def check():
     return "API is running"
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000, debug=True)
