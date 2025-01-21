@@ -100,6 +100,8 @@ def load_models():
     print("loading models completed!!!!!!!!!!!!")
 
 # Your API endpoints and other Flask code here...
+import base64
+from io import BytesIO
 from flask import request, jsonify
 from PIL import Image
 from pydantic import BaseModel
@@ -132,26 +134,22 @@ def tryon_image():
     print("Received JSON data:", data)  # Check if JSON is parsed correctly
 
     try:
-        print("Attempting to open human image:", data.get('human_image'))
-        human_image = Image.open(data['human_image'])
-        print("Human image opened successfully")
-    except FileNotFoundError as e:
-        print(f"Error opening human image: {e}")
-        return jsonify({"error": f"Human image not found: {e}"}), 500
+        print("Attempting to decode and open human image")
+        human_image_data = base64.b64decode(data['human_image_base64'])
+        human_image = Image.open(BytesIO(human_image_data))
+        print("Human image opened successfully from base64")
     except Exception as e:
-        print(f"Error opening human image: {e}")
-        return jsonify({"error": f"Error opening human image: {e}"}), 500
+        print(f"Error decoding or opening human image: {e}")
+        return jsonify({"error": f"Error decoding or opening human image: {e}"}), 500
 
     try:
-        print("Attempting to open garment image:", data.get('garment_image'))
-        garment_image = Image.open(data['garment_image'])
-        print("Garment image opened successfully")
-    except FileNotFoundError as e:
-        print(f"Error opening garment image: {e}")
-        return jsonify({"error": f"Garment image not found: {e}"}), 500
+        print("Attempting to decode and open garment image")
+        garment_image_data = base64.b64decode(data['garment_image_base64'])
+        garment_image = Image.open(BytesIO(garment_image_data))
+        print("Garment image opened successfully from base64")
     except Exception as e:
-        print(f"Error opening garment image: {e}")
-        return jsonify({"error": f"Error opening garment image: {e}"}), 500
+        print(f"Error decoding or opening garment image: {e}")
+        return jsonify({"error": f"Error decoding or opening garment image: {e}"}), 500
 
     try:
         print("Converting and resizing garment image")
