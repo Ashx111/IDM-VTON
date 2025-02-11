@@ -137,7 +137,7 @@ def tryon_image():
 
     print("Entering tryon_image function")
     data = request.get_json()
-    print("Received JSON data:", data)  # Check if JSON is parsed correctly
+    #print("Received JSON data:", data)  # Check if JSON is parsed correctly
 
     try:
         print("Attempting to decode and open human image")
