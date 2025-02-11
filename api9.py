@@ -338,6 +338,8 @@ def tryon_image():
         return jsonify({"error": f"An error occurred during processing: {e}"}), 500
     finally:
         print("Exiting tryon_image function")
+        torch.cuda.empty_cache()
+        gc.collect()
 
 @app.route("/check")
 def check():
