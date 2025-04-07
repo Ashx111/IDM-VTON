@@ -14,9 +14,10 @@ from diffusers import AutoencoderKL
 from preprocess.humanparsing.run_parsing import Parsing
 from preprocess.openpose.run_openpose import OpenPose
 
+app = Flask(__name__)
 # Assuming device is defined globally as before
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-app = Flask(__name__)
+
 # --- Global variables for models (keep as before) ---
 pipe = None
 unet = None
