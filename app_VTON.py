@@ -325,4 +325,4 @@ with image_blocks as demo:
 
     try_button.click(fn=start_tryon, inputs=[imgs, garm_img, prompt, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images], outputs=[image_gallery, masked_img],api_name='tryon')
 
-image_blocks.launch(server_name="0.0.0.0", server_port=7860, share=True, inbrowser=False)
+image_blocks.launch(server_name="0.0.0.0", server_port=7860, share=False, inbrowser=True)
