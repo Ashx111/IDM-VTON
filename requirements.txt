@@ -1,20 +1,44 @@
-numpy==1.24.4
-scipy==1.10.1
-scikit-image==0.21.0
-opencv-python==4.7.0.72
-pillow==9.4.0
+# requirements.txt for IDM-VTON project with pinned compatible versions
+
+# --- Core Diffusers & Transformers Stack ---
 diffusers==0.25.1
-transformers==4.41.1
-accelerate
+# NOTE: diffusers 0.25.1 requires huggingface_hub < 0.24 (approx) for cached_download
+huggingface-hub==0.23.0
+transformers==4.41.1 # Keeping user's specified version
+peft==0.10.0
+accelerate # Let pip determine based on torch/transformers
+bitsandbytes==0.42.0 # Common version compatible with torch 2.x
+
+# --- Image/Array Processing ---
+numpy==1.26.4 # Pinned version < 2.0
+scipy==1.10.1
+opencv-python==4.7.0.72
+Pillow==9.4.0
+scikit-image==0.21.0
 matplotlib==3.7.4
+
+# --- Gradio UI ---
+gradio==3.50.2
+gradio_client==0.7.0
+# Dependencies usually pulled by Gradio, pinning might help if needed later:
+# fastapi==0.100.1 # Example pin, adjust if needed
+# starlette==0.27.0 # Example pin
+# uvicorn==0.22.0 # Example pin
+# pydantic==1.10.12 # Example pin
+
+# --- Other Utilities ---
 tqdm==4.64.1
-config==0.5.1
 einops==0.7.0
 onnxruntime==1.16.2
+config==0.5.1 # Ensure this is the correct 'config' package you need
 basicsr
 av
 fvcore
 cloudpickle
 omegaconf
 pycocotools
+pandas~=2.2.0 # Compatible with numpy 1.26
 
+# --- EXCLUDED - Install Separately ---
+# torch, torchvision, torchaudio (Use specific index URL for CUDA)
+# xformers (Use specific build/command)
