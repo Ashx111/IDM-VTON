@@ -19,7 +19,7 @@ matplotlib==3.7.4
 
 # --- Gradio UI ---
 gradio==3.50.2
-gradio_client==0.7.0
+gradio_client==0.6.1
 # Dependencies usually pulled by Gradio, pinning might help if needed later:
 # fastapi==0.100.1 # Example pin, adjust if needed
 # starlette==0.27.0 # Example pin
