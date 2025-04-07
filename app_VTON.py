@@ -269,12 +269,9 @@ human_list_path = [os.path.join(example_path,"human",human) for human in human_l
 
 human_ex_list = []
 for ex_human in human_list_path:
+    # Only include paths that meet the criteria
     if "Jensen" in ex_human or "sam1 (1)" in ex_human:
-        ex_dict = {}
-        ex_dict['background'] = ex_human
-        ex_dict['layers'] = None
-        ex_dict['composite'] = None
-        human_ex_list.append(ex_dict)
+        human_ex_list.append(ex_human)
 
 image_blocks = gr.Blocks().queue()
 with image_blocks as demo:
@@ -283,7 +280,7 @@ with image_blocks as demo:
     with gr.Row():
         with gr.Column():
             #imgs = gr.ImageEditor(sources='upload', type="pil", label='Human. Mask with pen or use auto-masking', interactive=True , height=550)
-            imgs = gr.Image(sources='upload', tool='sketchpad', type="pil", label='Human. Mask with pen or use auto-masking', interactive=True , height=550)
+            imgs = gr.Image(tool='sketchpad', type="pil", label='Human. Mask with pen or use auto-masking', interactive=True , height=550)
             with gr.Row():
                 category = gr.Radio(choices=["upper_body", "lower_body", "dresses"], label="Select Garment Category", value="upper_body")
                 is_checked = gr.Checkbox(label="Yes", info="Use auto-generated mask (Takes 5 seconds)",value=True)
