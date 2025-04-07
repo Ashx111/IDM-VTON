@@ -17,6 +17,4 @@ fvcore
 cloudpickle
 omegaconf
 pycocotools
-huggingface_hub==0.25.2
-gradio
-peft
+
