@@ -294,7 +294,8 @@ with image_blocks as demo:
             )
 
         with gr.Column():
-            garm_img = gr.Image(label="Garment", sources='upload', type="pil")
+            #garm_img = gr.Image(label="Garment", sources='upload', type="pil")
+            garm_img = gr.Image(label="Garment", type="pil")
             with gr.Row(elem_id="prompt-container"):
                 with gr.Row():
                     prompt = gr.Textbox(placeholder="Description of garment ex) Short Sleeve Round Neck T-shirts", show_label=False, elem_id="prompt")
