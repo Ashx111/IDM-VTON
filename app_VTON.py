@@ -323,6 +323,8 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                         # Append the actual PIL image object to the results list
                         if output_image_pil:
                              results.append(output_image_pil)
+                            
+                        return results, mask_gray_pil
     
 garm_list = os.listdir(os.path.join(example_path,"cloth"))
 garm_list_path = [os.path.join(example_path,"cloth",garm) for garm in garm_list]
