@@ -283,22 +283,25 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                         generator = torch.Generator(device).manual_seed(seed_for_generator) if seed != -1 else None                     
                         current_seed = seed_for_generator + i
 
+                        num_inference_steps_int = int(denoise_steps)
+
                         images = pipe(
                             prompt_embeds=prompt_embeds.to(device,dtype),
                             negative_prompt_embeds=negative_prompt_embeds.to(device,dtype),
                             pooled_prompt_embeds=pooled_prompt_embeds.to(device,dtype),
                             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device,dtype),
-                            num_inference_steps=denoise_steps,
+                            # --- Use the integer version ---
+                            num_inference_steps=num_inference_steps_int,
                             generator=generator,
                             strength = 1.0,
                             pose_img = pose_img.to(device,dtype),
                             text_embeds_cloth=prompt_embeds_c.to(device,dtype),
                             cloth = garm_tensor.to(device,dtype),
                             mask_image=mask,
-                            image=human_img, 
+                            image=human_img,
                             height=1024,
                             width=768,
-                            ip_adapter_image = garm_img.resize((768,1024)),
+                            ip_adapter_image = garm_img.resize((768,1024)), # garm_img should already be 768x1024, resize is safe
                             guidance_scale=2.0,
                             dtype=dtype,
                             device=device,
