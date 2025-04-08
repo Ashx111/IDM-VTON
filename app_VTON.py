@@ -276,9 +276,12 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                     print(f"Debug: Received number_of_images = {number_of_images} (type: {type(number_of_images)})")
                     for i in range(int(number_of_images)):  
                         if is_randomize_seed:
-                            current_seed = torch.randint(0, 2**32, size=(1,)).item()                        
-                        generator = torch.Generator(device).manual_seed(current_seed) if seed != -1 else None                     
-                        current_seed = current_seed + i
+                            current_seed = torch.randint(0, 2**32, size=(1,)).item() 
+                        print(f"Debug: Using seed = {current_seed} (type: {type(current_seed)}) for generator.")
+                        print(f"Debug: Original seed param = {seed} (type: {type(seed)})")
+                        seed_for_generator = int(current_seed) if is_randomize_seed else int(seed)
+                        generator = torch.Generator(device).manual_seed(seed_for_generator) if seed != -1 else None                     
+                        current_seed = seed_for_generator + i
 
                         images = pipe(
                             prompt_embeds=prompt_embeds.to(device,dtype),
