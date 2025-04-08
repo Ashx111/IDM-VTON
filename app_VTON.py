@@ -273,7 +273,8 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                     garm_tensor =  tensor_transfrom(garm_img).unsqueeze(0).to(device,dtype)
                     results = []
                     current_seed = seed
-                    for i in range(number_of_images):  
+                    print(f"Debug: Received number_of_images = {number_of_images} (type: {type(number_of_images)})")
+                    for i in range(int(number_of_images)):  
                         if is_randomize_seed:
                             current_seed = torch.randint(0, 2**32, size=(1,)).item()                        
                         generator = torch.Generator(device).manual_seed(current_seed) if seed != -1 else None                     
