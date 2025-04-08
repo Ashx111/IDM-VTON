@@ -51,7 +51,8 @@ pipe = None
 UNet_Encoder = None
 example_path = os.path.join(os.path.dirname(__file__), 'example')
 
-def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
+#def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
+def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
     global pipe, unet, UNet_Encoder, need_restart_cpu_offloading
 
     if pipe == None:
@@ -138,10 +139,30 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
     #if load_mode != '4bit' :
     #    pipe.enable_xformers_memory_efficient_attention()    
 
-    garm_img= garm_img.convert("RGB").resize((768,1024))
-    human_img_orig = dict["background"].convert("RGB")    
-    
+    garm_img = garm_img_pil.convert("RGB").resize((768, 1024))
+
+    # Determine human_img_orig and potential input mask based on input type
+    human_img_orig = None
+    input_mask_pil = None
+    if isinstance(human_img_pil, dict) and 'image' in human_img_pil:
+        # Input from UI with sketchpad (might have mask)
+        human_img_orig = human_img_pil['image'].convert("RGB")
+        if 'mask' in human_img_pil and human_img_pil['mask'] is not None:
+            input_mask_pil = human_img_pil['mask'].convert("RGB")
+            print("Processing mask from UI sketchpad.")
+        else:
+             print("Processing image from UI sketchpad (no mask drawn).")
+    elif isinstance(human_img_pil, Image.Image):
+        # Input from API or UI without sketchpad use
+        human_img_orig = human_img_pil.convert("RGB")
+        print("Processing input as plain PIL Image (API call or no UI mask).")
+    else:
+        raise TypeError(f"Unexpected type for human image input: {type(human_img_pil)}")
+
+    # Apply cropping to human_img_orig if requested
+    crop_size = (768, 1024) # Default if no crop
     if is_checked_crop:
+        print("Applying auto-crop...")
         width, height = human_img_orig.size
         target_width = int(min(width, height * (3 / 4)))
         target_height = int(min(height, width * (4 / 3)))
@@ -150,38 +171,65 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
         right = (width + target_width) / 2
         bottom = (height + target_height) / 2
         cropped_img = human_img_orig.crop((left, top, right, bottom))
-        crop_size = cropped_img.size
-        human_img = cropped_img.resize((768,1024))
+        crop_size = cropped_img.size # Store actual crop size
+        human_img = cropped_img.resize((768, 1024))
+        print(f"Cropped to {crop_size}, Resized to (768, 1024)")
     else:
-        human_img = human_img_orig.resize((768,1024))
+        print("No auto-crop. Resizing original to (768, 1024)")
+        human_img = human_img_orig.resize((768, 1024))
+        # Note: crop_size remains (768, 1024) which is correct for paste-back logic if no crop applied
 
+    # Determine the final mask to use
+    mask = None
     if is_checked:
-        keypoints = openpose_model(human_img.resize((384,512)))
-        model_parse, _ = parsing_model(human_img.resize((384,512)))
-        mask, mask_gray = get_mask_location('hd', category, model_parse, keypoints)
-        mask = mask.resize((768,1024))
+        print("Generating auto-mask...")
+        # Note: Depending on get_mask_location, it might return one or two values.
+        # Assuming it returns (PIL mask, PIL mask_gray) based on original code structure.
+        keypoints = openpose_model(human_img.resize((384, 512)))
+        model_parse, _ = parsing_model(human_img.resize((384, 512)))
+        # *** Adjust the line below based on what get_mask_location ACTUALLY returns ***
+        mask, mask_gray_pil = get_mask_location('hd', category, model_parse, keypoints) # Example assumption
+        mask = mask.resize((768, 1024))
+        # If get_mask_location only returns mask, calculate mask_gray here:
+        # mask_gray_pil = to_pil_image(((1 - transforms.ToTensor()(mask)) * tensor_transfrom(human_img) + 1.0) / 2.0)
+        print("Auto-mask generated.")
+    elif input_mask_pil is not None:
+        # Use the mask provided from the sketchpad
+        print("Using provided sketchpad mask...")
+        mask = pil_to_binary_mask(input_mask_pil.resize((768, 1024)))
+        # Calculate mask_gray based on this mask
+        mask_gray_pil = to_pil_image(((1 - transforms.ToTensor()(mask)) * tensor_transfrom(human_img) + 1.0) / 2.0)
+        print("Sketchpad mask processed.")
     else:
-        mask = pil_to_binary_mask(dict['layers'][0].convert("RGB").resize((768, 1024)))
-        # mask = transforms.ToTensor()(mask)
-        # mask = mask.unsqueeze(0)
-    
-    mask_gray = (1-transforms.ToTensor()(mask)) * tensor_transfrom(human_img)
-    mask_gray = to_pil_image((mask_gray+1.0)/2.0)
+        # Manual mask selected, but none provided (e.g., API call) -> Use default black mask
+        print("Warning: Manual masking selected, but no mask provided. Using default black mask.")
+        mask = Image.new('L', (768, 1024), 0) # Black mask
+        # Calculate mask_gray based on black mask
+        mask_gray_pil = to_pil_image(((1 - transforms.ToTensor()(mask)) * tensor_transfrom(human_img) + 1.0) / 2.0)
 
-    human_img_arg = _apply_exif_orientation(human_img.resize((384,512)))
+    # Ensure mask_gray_pil is assigned (should be handled above, but as fallback)
+    if 'mask_gray_pil' not in locals():
+         print("Calculating mask_gray as fallback.")
+         mask_gray_pil = to_pil_image(((1 - transforms.ToTensor()(mask)) * tensor_transfrom(human_img) + 1.0) / 2.0)
+
+
+    # Prepare DensePose input using the final processed human_img
+    print("Generating DensePose...")
+    human_img_arg = _apply_exif_orientation(human_img.resize((384, 512)))
     human_img_arg = convert_PIL_to_numpy(human_img_arg, format="BGR")
 
-    args = apply_net.create_argument_parser().parse_args(('show', './configs/densepose_rcnn_R_50_FPN_s1x.yaml', './ckpt/densepose/model_final_162be9.pkl', 'dp_segm', '-v', '--opts', 'MODEL.DEVICE', 'cuda'))
-    # verbosity = getattr(args, "verbosity", None)
-    pose_img = args.func(args,human_img_arg)    
-    pose_img = pose_img[:,:,::-1]    
-    pose_img = Image.fromarray(pose_img).resize((768,1024))
-    
-    if pipe.text_encoder is not None:        
-        pipe.text_encoder.to(device)
+    args_densepose = apply_net.create_argument_parser().parse_args(('show', './configs/densepose_rcnn_R_50_FPN_s1x.yaml', './ckpt/densepose/model_final_162be9.pkl', 'dp_segm', '-v', '--opts', 'MODEL.DEVICE', 'cuda'))
+    pose_img = args_densepose.func(args_densepose, human_img_arg)
+    pose_img = pose_img[:, :, ::-1] # BGR to RGB
+    pose_img = Image.fromarray(pose_img).resize((768, 1024))
+    print("DensePose generated.")
 
+    # Move text encoders to device
+    if pipe.text_encoder is not None:
+        pipe.text_encoder.to(device)
     if pipe.text_encoder_2 is not None:
         pipe.text_encoder_2.to(device)
+
 
     with torch.no_grad():
         # Extract the images
