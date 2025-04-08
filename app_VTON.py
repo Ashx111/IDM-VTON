@@ -306,15 +306,23 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                             dtype=dtype,
                             device=device,
                         )[0]
+                        output_image_pil = None
                         if is_checked_crop:
-                            out_img = images[0].resize(crop_size)        
-                            human_img_orig.paste(out_img, (int(left), int(top)))   
-                            img_path = save_output_image(human_img_orig, base_path="outputs", base_filename='img', seed=current_seed)
-                            results.append(img_path)
+                            out_img = images[0].resize(crop_size)
+                            # Create a copy to avoid modifying the original if needed elsewhere
+                            final_image_pil = human_img_orig.copy()
+                            final_image_pil.paste(out_img, (int(left), int(top)))
+                            output_image_pil = final_image_pil # Assign the pasted image
+                            # REMOVE: img_path = save_output_image(human_img_orig, base_path="outputs", base_filename='img', seed=current_seed)
+                            # results.append(img_path) # Don't append path
                         else:
-                            img_path = save_output_image(images[0], base_path="outputs", base_filename='img')
-                            results.append(img_path)
-                    return results, mask_gray_pil
+                            output_image_pil = images[0] # Assign the direct output image
+                            # REMOVE: img_path = save_output_image(images[0], base_path="outputs", base_filename='img')
+                            # results.append(img_path) # Don't append path
+
+                        # Append the actual PIL image object to the results list
+                        if output_image_pil:
+                             results.append(output_image_pil)
     
 garm_list = os.listdir(os.path.join(example_path,"cloth"))
 garm_list_path = [os.path.join(example_path,"cloth",garm) for garm in garm_list]
