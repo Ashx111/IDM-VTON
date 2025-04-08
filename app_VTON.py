@@ -314,7 +314,7 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                         else:
                             img_path = save_output_image(images[0], base_path="outputs", base_filename='img')
                             results.append(img_path)
-                    return results, mask_gray
+                    return results, mask_gray_pil
     
 garm_list = os.listdir(os.path.join(example_path,"cloth"))
 garm_list_path = [os.path.join(example_path,"cloth",garm) for garm in garm_list]
