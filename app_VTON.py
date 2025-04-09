@@ -232,79 +232,26 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
 
 
     with torch.no_grad():
-        # Ensure model components are on the correct device before encoding
-        if pipe.text_encoder is not None: pipe.text_encoder.to(device)
-        if pipe.text_encoder_2 is not None: pipe.text_encoder_2.to(device)
-        if pipe.image_encoder is not None: pipe.image_encoder.to(device) # Added image encoder move just in case
+        # Ensure base models are on device ONCE before the loop
+        if pipe.image_encoder is not None: pipe.image_encoder.to(device)
         if pipe.unet is not None: pipe.unet.to(device)
         if pipe.vae is not None: pipe.vae.to(device)
         if pipe.unet_encoder is not None: pipe.unet_encoder.to(device)
+        # Text encoders might be moved by offload, handle them inside/around encode
 
         with torch.cuda.amp.autocast(dtype=dtype):
-            # --- MOVE PROMPT ENCODING HERE (Inside autocast, before loop) ---
-            print("Debug SERVER: Encoding prompts...")
-            try:
-                # Encode prompts for condition guidance
-                prompt = "model is wearing " + garment_des
-                negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
-                (
-                    prompt_embeds,
-                    negative_prompt_embeds,
-                    pooled_prompt_embeds,
-                    negative_pooled_prompt_embeds,
-                ) = pipe.encode_prompt(
-                    prompt,
-                    num_images_per_prompt=1, # Encode once, reuse in loop
-                    do_classifier_free_guidance=True,
-                    negative_prompt=negative_prompt,
-                )
+            # Prepare pose and garment tensors (once before loop)
+            pose_img_tensor = tensor_transfrom(pose_img).unsqueeze(0).to(device,dtype)
+            garm_tensor = tensor_transfrom(garm_img).unsqueeze(0).to(device,dtype)
+            print("Debug SERVER: Pose and Garment tensors prepared.")
 
-                # Encode prompts for cloth guidance
-                prompt_c = "a photo of " + garment_des
-                negative_prompt_c = "monochrome, lowres, bad anatomy, worst quality, low quality"
-                # Ensure list format (though pipe should handle it)
-                if not isinstance(prompt_c, List): prompt_c = [prompt_c] * 1
-                if not isinstance(negative_prompt_c, List): negative_prompt_c = [negative_prompt_c] * 1
-                (
-                    prompt_embeds_c,
-                    _, # We don't need neg embeds for cloth usually
-                    _, # pooled embeds not typically used for cloth guidance here
-                    _,
-                ) = pipe.encode_prompt(
-                    prompt_c,
-                    num_images_per_prompt=1, # Encode once
-                    do_classifier_free_guidance=False, # Classifier free guidance not needed for cloth prompt
-                    negative_prompt=negative_prompt_c,
-                )
-                print("Debug SERVER: Prompts encoded successfully.")
-
-                # Prepare pose and garment tensors (once before loop)
-                pose_img_tensor = tensor_transfrom(pose_img).unsqueeze(0).to(device,dtype)
-                garm_tensor = tensor_transfrom(garm_img).unsqueeze(0).to(device,dtype)
-                print("Debug SERVER: Pose and Garment tensors prepared.")
-
-            except Exception as encode_e:
-                 print(f"!!!!!!!!!!!!!! ERROR during prompt encoding !!!!!!!!!!!!!!")
-                 print(encode_e)
-                 import traceback
-                 traceback.print_exc()
-                 print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                 # If encoding fails, we cannot proceed. Return empty results.
-                 # Ensure mask_gray_pil exists
-                 if 'mask_gray_pil' not in locals() or mask_gray_pil is None:
-                     if mask is None: mask = Image.new('L', (768, 1024), 0)
-                     mask_gray_pil = to_pil_image(((1 - transforms.ToTensor()(mask)) * tensor_transfrom(human_img) + 1.0) / 2.0)
-                 return [], mask_gray_pil
-            # --- END PROMPT ENCODING ---
-
-
-            results_pil = [] # Initialize list to store multiple results
+            results_pil = []
 
             try:
                 num_images_to_generate = int(number_of_images)
                 print(f"Debug SERVER: num_images_to_generate = {num_images_to_generate}")
             except Exception as e:
-                print(f"Error converting number_of_images '{number_of_images}' to int: {e}. Defaulting to 1.")
+                print(f"Error converting number_of_images: {e}. Defaulting to 1.")
                 num_images_to_generate = 1
 
             # --- Loop starts here ---
@@ -312,39 +259,65 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                 print(f"\nDebug SERVER: --- Starting Loop Iteration {i} ---")
 
                 # --- Seed logic (no changes) ---
-                if is_randomize_seed:
-                    current_run_seed = torch.randint(0, 2**32, size=(1,)).item()
+                if is_randomize_seed: current_run_seed = torch.randint(0, 2**32, size=(1,)).item()
                 else:
                     try: base_seed = int(seed); current_run_seed = base_seed + i if base_seed != -1 else -1
                     except Exception as e: print(f"Error converting seed: {e}"); current_run_seed = -1
                 print(f"Debug SERVER Iteration {i}: Using seed = {current_run_seed}")
                 generator = torch.Generator(device).manual_seed(current_run_seed) if current_run_seed != -1 else None
-                # --- End Seed logic ---
 
-                # --- Pipe call (Now Embeds should be defined) ---
+                # --- MOVE PROMPT ENCODING BACK INSIDE THE LOOP ---
+                # This ensures text encoders are likely on GPU when needed by pipe()
+                # especially important if CPU offloading is active.
+                try:
+                    print(f"Debug SERVER Iteration {i}: Encoding prompts...")
+                    # Ensure text encoders are on device before encoding THIS iteration
+                    if pipe.text_encoder is not None: pipe.text_encoder.to(device)
+                    if pipe.text_encoder_2 is not None: pipe.text_encoder_2.to(device)
+
+                    prompt = "model is wearing " + garment_des
+                    negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
+                    (
+                        prompt_embeds, negative_prompt_embeds,
+                        pooled_prompt_embeds, negative_pooled_prompt_embeds,
+                    ) = pipe.encode_prompt(
+                        prompt, num_images_per_prompt=1,
+                        do_classifier_free_guidance=True, negative_prompt=negative_prompt,
+                    )
+
+                    prompt_c = "a photo of " + garment_des
+                    negative_prompt_c = "monochrome, lowres, bad anatomy, worst quality, low quality"
+                    if not isinstance(prompt_c, List): prompt_c = [prompt_c] * 1
+                    if not isinstance(negative_prompt_c, List): negative_prompt_c = [negative_prompt_c] * 1
+                    ( prompt_embeds_c, _, _, _, ) = pipe.encode_prompt(
+                        prompt_c, num_images_per_prompt=1,
+                        do_classifier_free_guidance=False, negative_prompt=negative_prompt_c,
+                    )
+                    print(f"Debug SERVER Iteration {i}: Prompts encoded.")
+
+                except Exception as encode_e:
+                    print(f"!!!!!!!! ERROR during prompt encoding on Iteration {i} !!!!!!!!")
+                    print(encode_e); traceback.print_exc()
+                    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                    continue # Skip this iteration if encoding fails
+                # --- END PROMPT ENCODING ---
+
+
+                # --- Pipe call ---
                 try:
                      num_inference_steps_int = int(denoise_steps)
                      print(f"Debug SERVER Iteration {i}: Calling pipe() with steps={num_inference_steps_int}...")
 
-                     # --- Ensure Embeddings are on the correct device within the loop context if needed ---
-                     # (though they should already be from the encoding step)
-                     prompt_embeds_dev = prompt_embeds.to(device, dtype)
-                     negative_prompt_embeds_dev = negative_prompt_embeds.to(device, dtype)
-                     pooled_prompt_embeds_dev = pooled_prompt_embeds.to(device, dtype)
-                     negative_pooled_prompt_embeds_dev = negative_pooled_prompt_embeds.to(device, dtype)
-                     prompt_embeds_c_dev = prompt_embeds_c.to(device, dtype)
-                     # ---
-
                      images = pipe(
-                        prompt_embeds=prompt_embeds_dev,
-                        negative_prompt_embeds=negative_prompt_embeds_dev,
-                        pooled_prompt_embeds=pooled_prompt_embeds_dev,
-                        negative_pooled_prompt_embeds=negative_pooled_prompt_embeds_dev,
+                        prompt_embeds=prompt_embeds.to(device, dtype), # Pass embeddings calculated in this loop
+                        negative_prompt_embeds=negative_prompt_embeds.to(device, dtype),
+                        pooled_prompt_embeds=pooled_prompt_embeds.to(device, dtype),
+                        negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device, dtype),
                         num_inference_steps=num_inference_steps_int,
                         generator=generator,
                         strength = 1.0,
                         pose_img = pose_img_tensor, # Already on device
-                        text_embeds_cloth=prompt_embeds_c_dev,
+                        text_embeds_cloth=prompt_embeds_c.to(device, dtype), # Pass embeddings calculated in this loop
                         cloth = garm_tensor, # Already on device
                         mask_image=mask,
                         image=human_img,
@@ -352,50 +325,37 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                         width=768,
                         ip_adapter_image = garm_img.resize((768,1024)),
                         guidance_scale=2.0,
-                        # No need to pass dtype/device to pipe call itself
                      )[0]
                      print(f"Debug SERVER Iteration {i}: pipe() call finished successfully.")
 
                 except Exception as pipe_e:
-                     print(f"!!!!!!!!!!!!!! ERROR during pipe() call on Iteration {i} !!!!!!!!!!!!!!")
-                     print(pipe_e)
-                     import traceback
-                     traceback.print_exc()
-                     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                     continue # Skip appending image for this iteration
+                     print(f"!!!!!!!! ERROR during pipe() call on Iteration {i} !!!!!!!!!")
+                     print(pipe_e); traceback.print_exc()
+                     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                     continue
 
                 # --- Image processing and appending (no changes) ---
+                # ... (crop/paste logic) ...
                 output_image_pil = None
                 if is_checked_crop:
-                    try:
-                         out_img_resized = images[0].resize(crop_size)
-                         final_image_pil = human_img_orig.copy()
-                         final_image_pil.paste(out_img_resized, (int(left), int(top)))
-                         output_image_pil = final_image_pil
-                    except Exception as crop_e:
-                         print(f"Error during cropping/pasting on Iteration {i}: {crop_e}")
-                         output_image_pil = images[0]
-                else:
-                    output_image_pil = images[0]
+                    # ... (crop logic) ...
+                     try: out_img_resized=images[0].resize(crop_size);final_image_pil=human_img_orig.copy();final_image_pil.paste(out_img_resized,(int(left),int(top)));output_image_pil=final_image_pil
+                     except Exception as crop_e: print(f"Crop error iter {i}: {crop_e}"); output_image_pil = images[0]
+                else: output_image_pil = images[0]
 
                 if output_image_pil:
                     results_pil.append(output_image_pil)
                     print(f"Debug SERVER Iteration {i}: Appended image. results_pil length = {len(results_pil)}")
-                else:
-                    print(f"Debug SERVER Iteration {i}: No output PIL image generated/processed.")
-                # --- End image processing ---
+                else: print(f"Debug SERVER Iteration {i}: No output PIL image.")
 
                 print(f"Debug SERVER: --- Finished Loop Iteration {i} ---")
 
             # --- AFTER THE LOOP ---
             print(f"\nDebug SERVER After Loop: Final length of results_pil = {len(results_pil)}")
-            print(f"Returning {len(results_pil)} generated PIL images and one mask PIL image.")
-            # Ensure mask_gray_pil exists
+            # ... (mask fallback and return) ...
             if 'mask_gray_pil' not in locals() or mask_gray_pil is None:
-                 print("Warning: mask_gray_pil was None before returning. Creating placeholder.")
                  if mask is None: mask = Image.new('L', (768, 1024), 0)
                  mask_gray_pil = to_pil_image(((1 - transforms.ToTensor()(mask)) * tensor_transfrom(human_img) + 1.0) / 2.0)
-
             return results_pil, mask_gray_pil
     
 garm_list = os.listdir(os.path.join(example_path,"cloth"))
