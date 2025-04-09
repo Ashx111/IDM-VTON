@@ -233,11 +233,12 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
 
     with torch.no_grad():
         # Ensure base models are on device ONCE before the loop
+        # Let pipeline handle text encoders unless specific issues arise
         if pipe.image_encoder is not None: pipe.image_encoder.to(device)
         if pipe.unet is not None: pipe.unet.to(device)
         if pipe.vae is not None: pipe.vae.to(device)
         if pipe.unet_encoder is not None: pipe.unet_encoder.to(device)
-        # Text encoders might be moved by offload, handle them inside/around encode
+        # NOTE: Deliberately NOT moving text_encoders here initially
 
         with torch.cuda.amp.autocast(dtype=dtype):
             # Prepare pose and garment tensors (once before loop)
@@ -247,12 +248,8 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
 
             results_pil = []
 
-            try:
-                num_images_to_generate = int(number_of_images)
-                print(f"Debug SERVER: num_images_to_generate = {num_images_to_generate}")
-            except Exception as e:
-                print(f"Error converting number_of_images: {e}. Defaulting to 1.")
-                num_images_to_generate = 1
+            try: num_images_to_generate = int(number_of_images); print(f"Debug SERVER: num_images_to_generate = {num_images_to_generate}")
+            except Exception as e: print(f"Error converting num_images: {e}. Defaulting to 1."); num_images_to_generate = 1
 
             # --- Loop starts here ---
             for i in range(num_images_to_generate):
@@ -266,15 +263,10 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                 print(f"Debug SERVER Iteration {i}: Using seed = {current_run_seed}")
                 generator = torch.Generator(device).manual_seed(current_run_seed) if current_run_seed != -1 else None
 
-                # --- MOVE PROMPT ENCODING BACK INSIDE THE LOOP ---
-                # This ensures text encoders are likely on GPU when needed by pipe()
-                # especially important if CPU offloading is active.
+                # --- Prompt Encoding INSIDE LOOP ---
                 try:
                     print(f"Debug SERVER Iteration {i}: Encoding prompts...")
-                    # Ensure text encoders are on device before encoding THIS iteration
-                    if pipe.text_encoder is not None: pipe.text_encoder.to(device)
-                    if pipe.text_encoder_2 is not None: pipe.text_encoder_2.to(device)
-
+                    # Rely on pipe.encode_prompt to handle device placement of text encoders
                     prompt = "model is wearing " + garment_des
                     negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
                     (
@@ -282,7 +274,7 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                         pooled_prompt_embeds, negative_pooled_prompt_embeds,
                     ) = pipe.encode_prompt(
                         prompt, num_images_per_prompt=1,
-                        do_classifier_free_guidance=True, negative_prompt=negative_prompt,
+                        do_classifier_free_guidance=True, negative_prompt=negative_prompt, device=device, # Pass target device
                     )
 
                     prompt_c = "a photo of " + garment_des
@@ -291,34 +283,33 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                     if not isinstance(negative_prompt_c, List): negative_prompt_c = [negative_prompt_c] * 1
                     ( prompt_embeds_c, _, _, _, ) = pipe.encode_prompt(
                         prompt_c, num_images_per_prompt=1,
-                        do_classifier_free_guidance=False, negative_prompt=negative_prompt_c,
+                        do_classifier_free_guidance=False, negative_prompt=negative_prompt_c, device=device, # Pass target device
                     )
                     print(f"Debug SERVER Iteration {i}: Prompts encoded.")
 
                 except Exception as encode_e:
-                    print(f"!!!!!!!! ERROR during prompt encoding on Iteration {i} !!!!!!!!")
-                    print(encode_e); traceback.print_exc()
-                    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                    continue # Skip this iteration if encoding fails
+                    print(f"!!!!!!!! ERROR encoding prompts iter {i} !!!!!!!!")
+                    print(encode_e); traceback.print_exc(); continue
                 # --- END PROMPT ENCODING ---
-
 
                 # --- Pipe call ---
                 try:
                      num_inference_steps_int = int(denoise_steps)
                      print(f"Debug SERVER Iteration {i}: Calling pipe() with steps={num_inference_steps_int}...")
 
+                     # --- REMOVED explicit .to(device, dtype) for embeddings ---
+                     # Let the pipe call handle ensuring inputs are on the correct device.
                      images = pipe(
-                        prompt_embeds=prompt_embeds.to(device, dtype), # Pass embeddings calculated in this loop
-                        negative_prompt_embeds=negative_prompt_embeds.to(device, dtype),
-                        pooled_prompt_embeds=pooled_prompt_embeds.to(device, dtype),
-                        negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device, dtype),
+                        prompt_embeds=prompt_embeds, # Pass directly
+                        negative_prompt_embeds=negative_prompt_embeds, # Pass directly
+                        pooled_prompt_embeds=pooled_prompt_embeds, # Pass directly
+                        negative_pooled_prompt_embeds=negative_pooled_prompt_embeds, # Pass directly
                         num_inference_steps=num_inference_steps_int,
                         generator=generator,
                         strength = 1.0,
-                        pose_img = pose_img_tensor, # Already on device
-                        text_embeds_cloth=prompt_embeds_c.to(device, dtype), # Pass embeddings calculated in this loop
-                        cloth = garm_tensor, # Already on device
+                        pose_img = pose_img_tensor,
+                        text_embeds_cloth=prompt_embeds_c, # Pass directly
+                        cloth = garm_tensor,
                         mask_image=mask,
                         image=human_img,
                         height=1024,
@@ -329,18 +320,15 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                      print(f"Debug SERVER Iteration {i}: pipe() call finished successfully.")
 
                 except Exception as pipe_e:
-                     print(f"!!!!!!!! ERROR during pipe() call on Iteration {i} !!!!!!!!!")
-                     print(pipe_e); traceback.print_exc()
-                     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                     continue
+                     print(f"!!!!!!!! ERROR during pipe() call iter {i} !!!!!!!!!")
+                     print(pipe_e); traceback.print_exc(); continue
 
-                # --- Image processing and appending (no changes) ---
-                # ... (crop/paste logic) ...
+                # --- Image processing and appending ---
+                # ... (crop/paste logic - no changes needed) ...
                 output_image_pil = None
                 if is_checked_crop:
-                    # ... (crop logic) ...
-                     try: out_img_resized=images[0].resize(crop_size);final_image_pil=human_img_orig.copy();final_image_pil.paste(out_img_resized,(int(left),int(top)));output_image_pil=final_image_pil
-                     except Exception as crop_e: print(f"Crop error iter {i}: {crop_e}"); output_image_pil = images[0]
+                    try: out_img_resized=images[0].resize(crop_size);final_image_pil=human_img_orig.copy();final_image_pil.paste(out_img_resized,(int(left),int(top)));output_image_pil=final_image_pil
+                    except Exception as crop_e: print(f"Crop error iter {i}: {crop_e}"); output_image_pil = images[0]
                 else: output_image_pil = images[0]
 
                 if output_image_pil:
@@ -349,6 +337,10 @@ def start_tryon(human_img_pil, garm_img_pil, garment_des, category, is_checked, 
                 else: print(f"Debug SERVER Iteration {i}: No output PIL image.")
 
                 print(f"Debug SERVER: --- Finished Loop Iteration {i} ---")
+                # --- Optional: Add manual GC call inside loop if memory fragmentation is suspected ---
+                # torch_gc()
+                # print(f"Debug SERVER Iteration {i}: Ran torch_gc()")
+                # ---
 
             # --- AFTER THE LOOP ---
             print(f"\nDebug SERVER After Loop: Final length of results_pil = {len(results_pil)}")
